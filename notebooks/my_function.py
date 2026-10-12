@@ -79,6 +79,101 @@ def optim_plot_prevalence(
     plt.show()
 
 
+def compare_clinical_calibration(
+    df_data,
+    test_ids,
+    raw_col="score_bcscRisk",
+    recalib_col="score_bcscRisk_recalib",
+    target_col="has_bc",
+    id_col="person_id",
+    n_bins=10,
+    model_name="BCSC v2",
+    figsize=(7, 7),
+):
+    """Compare directement deux colonnes de probabilités absolues (Brut vs Recalibré)
+
+    sans appliquer de transformation Z-score.
+    """
+    ids_test_flat = (
+        test_ids.values.ravel()
+        if hasattr(test_ids, "values")
+        else np.asarray(test_ids).ravel()
+    )
+    df_test = df_data[df_data[id_col].isin(ids_test_flat)].dropna(
+        subset=[target_col, raw_col, recalib_col]
+    )
+
+    y_test = df_test[target_col]
+    prob_raw = df_test[raw_col]
+    prob_rec = df_test[recalib_col]
+
+    # Points des courbes par déciles
+    prob_true_raw, prob_pred_raw = calibration_curve(
+        y_test, prob_raw, n_bins=n_bins, strategy="quantile"
+    )
+    prob_true_rec, prob_pred_rec = calibration_curve(
+        y_test, prob_rec, n_bins=n_bins, strategy="quantile"
+    )
+
+    max_val = (
+        max(
+            prob_true_raw.max(),
+            prob_pred_raw.max(),
+            prob_true_rec.max(),
+            prob_pred_rec.max(),
+        )
+        * 1.15
+    )
+
+    plt.figure(figsize=figsize)
+
+    # Ligne idéale y = x
+    plt.plot(
+        [0, max_val],
+        [0, max_val],
+        linestyle="--",
+        color="gray",
+        linewidth=2,
+        label="Calibration parfaite (y = x)",
+    )
+
+    # Courbe Brut (Rouge)
+    plt.plot(
+        prob_pred_raw,
+        prob_true_raw,
+        marker="s",
+        linewidth=2,
+        color="crimson",
+        label=f"{model_name} Brut",
+    )
+
+    # Courbe Recalibré (Bleu)
+    plt.plot(
+        prob_pred_rec,
+        prob_true_rec,
+        marker="o",
+        linewidth=2,
+        color="dodgerblue",
+        label=f"{model_name} Recalibré",
+    )
+
+    plt.xlim([0, max_val])
+    plt.ylim([0, max_val])
+
+    plt.xlabel("Risque prédit moyen", fontsize=11, fontweight="bold")
+    plt.ylabel("Proportion observée de cas", fontsize=11, fontweight="bold")
+    plt.title(
+        f"Comparaison de Calibration - {model_name}\n(Jeu de Test N = {len(df_test)})",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    plt.legend(loc="upper left", frameon=True, fontsize=10)
+    plt.grid(True, linestyle=":", alpha=0.6)
+    plt.tight_layout()
+    plt.show()
+
+
 def bootstrap_auc(y_true_ser, y_scores_ser, n_bootstraps=1000, rng_seed=42):
     """Calcule l'IC à 95% de l'AUC par bootstrap de manière sécurisée."""
     bootstrapped_scores = []
