@@ -785,6 +785,11 @@ import pandas as pd
 import statsmodels.api as sm
 
 
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+
+
 def recalibrate_combined_models(
     df_data,
     train_ids,
@@ -793,15 +798,16 @@ def recalibrate_combined_models(
     target_col="has_bc",
     id_col="person_id",
 ):
-    """Ajuste l'intercept (alpha_c) des modèles combinés sur le jeu de Train (25%)
+    """Calcule l'intercept d'ajustement (alpha_c) sur le Train (25%) avec offset
 
-    et applique la correction sur le jeu de Test (75%) pour ramener le ratio O/E à 1.00.
+    et recalibre les modèles combinés sur le Test (75%) pour ramener O/E à 1.000.
     """
     if combined_cols is None:
         combined_cols = ["prob_bcsc_prs311", "prob_mammorisk_prs311"]
 
     df_out = df_data.copy()
 
+    # Formatage des IDs Train / Test
     ids_train_flat = (
         train_ids.values.ravel()
         if hasattr(train_ids, "values")
@@ -818,26 +824,34 @@ def recalibrate_combined_models(
 
     eps = 1e-7
 
-    print("=== RECALIBRATION DE L'INTERCEPT DES MODÈLES COMBINÉS ===")
+    print("=== RECALIBRATION DES MODÈLES COMBINÉS ===")
 
     for col in combined_cols:
         if col not in df_out.columns:
-            print(f"⚠️ Colonne '{col}' introuvable dans df_data.")
+            print(f"⚠️ Colonne '{col}' introuvable dans le DataFrame.")
             continue
 
-        # 1. Calcul du logit sur le TRAIN
+        # 1. Extraction du Train
         df_train = df_out[is_train].dropna(subset=[target_col, col]).copy()
+
+        if len(df_train) == 0:
+            print(
+                f"⚠️ Impossible d'ajuster '{col}' : le jeu Train est vide dans df_data."
+            )
+            continue
+
+        # Convertion des probabilités en Logit (offset)
         p_train = np.clip(df_train[col], eps, 1 - eps)
         logit_train = np.log(p_train / (1 - p_train))
 
-        # 2. Estimation de alpha_c (offset = logit_train, const seule apprise)
+        # 2. Estimation de alpha_c (Intercept pur avec offset = logit_train)
         X_train = np.ones((len(df_train), 1))
         y_train = df_train[target_col]
 
         model = sm.Logit(y_train, X_train, offset=logit_train).fit(disp=False)
         alpha_c = model.params[0]
 
-        # 3. Application du décalage sur le TEST
+        # 3. Application du décalage sur le jeu de Test
         df_test = df_out[is_test].dropna(subset=[target_col, col]).copy()
         p_test = np.clip(df_test[col], eps, 1 - eps)
         logit_test = np.log(p_test / (1 - p_test))
@@ -847,7 +861,9 @@ def recalibrate_combined_models(
             1.0 + np.exp(-(logit_test + alpha_c))
         )
 
-        print(f"• Modèle '{col}' : Intercept d'ajustement (α_c) = {alpha_c:.4f}")
+        print(
+            f"• Modèle '{col}' : Intercept d'ajustement (α_c) = {alpha_c:.4f}"
+        )
         print(f"  ➜ Nouvelle colonne générée : '{new_col}'")
 
     print()
